@@ -7,15 +7,10 @@
 *)
 
 open Common
-module AST = Ast_php
+module AST = AST_generic
 module CST = Tree_sitter_hack.CST
-module PI = Parse_info
-open Ast_php
-
-(* This is a tiny portion of the generic AST defined in pfff. Not sure
-   if we need it for PHP. *)
-module G = AST_generic_
 module H = Parse_tree_sitter_helpers
+module PI = Parse_info
 
 (**
    Boilerplate to be used as a template when mapping the hack CST
@@ -44,9 +39,11 @@ type env = input_kind H.env
 (* TODO: use this:
 let token = H.token
 *)
-let token (env : env) _ = failwith "not implemented: token"
-
+(* let token (env : env) _ = failwith "not implemented: token" *)
+let token = H.token
 let str = H.str
+
+let fk = Parse_info.fake_info ""
 
 (*
    Temporarily avoid warnings about these things being unused.
@@ -54,8 +51,6 @@ let str = H.str
 let () =
   ignore pr;
   (* from Common *)
-  ignore str_of_name;
-  (* from Ast_php *)
   ignore str
 
 (* Remove this function when everything is done *)
@@ -465,13 +460,17 @@ let use_clause (env : env) ((v1, v2, v3) : CST.use_clause) =
   in
   todo env (v1, v2, v3)
 
-let rec anon_choice_comp_stmt_c6c6bb4 (env : env)
-    (x : CST.anon_choice_comp_stmt_c6c6bb4) : stmt =
-  match x with
-  | `Comp_stmt x -> compound_statement env x
-  | `SEMI tok -> token env tok
+let empty_stmt env t =
+  let t = token env t (* ";" *) in
+  AST.Block (t, [], t) |> AST.s
 
-(* ";" *)
+let rec inline_compound_statement (env : env)
+    (x : CST.anon_choice_comp_stmt_c6c6bb4) : AST.stmt =
+    match x with
+    (* change how treesitter grammar does this? *)
+      | `Comp_stmt x -> compound_statement env x
+      | `SEMI tok -> empty_stmt env tok (* ";" *) (* I think this is an empty stmt *)
+
 and anon_choice_exp_1701d0a (env : env) (x : CST.anon_choice_exp_1701d0a) =
   match x with
   | `Exp x -> expression env x
@@ -539,7 +538,7 @@ and argument (env : env) ((v1, v2) : CST.argument) =
   let v2 = expression env v2 in
   todo env (v1, v2)
 
-and arguments (env : env) ((v1, v2, v3) : CST.arguments) =
+and arguments (env : env) ((v1, v2, v3) : CST.arguments) : AST.arguments =
   let v1 = token env v1 (* "(" *) in
   let v2 =
     match v2 with
@@ -556,7 +555,7 @@ and arguments (env : env) ((v1, v2, v3) : CST.arguments) =
         let v3 =
           match v3 with
           | Some tok -> token env tok (* "," *)
-          | None -> todo env ()
+          | None -> None
         in
         todo env (v1, v2, v3)
     | None -> todo env ()
@@ -793,7 +792,7 @@ and call_expression (env : env) ((v1, v2, v3) : CST.call_expression) =
   let v1 =
     match v1 with
     | `Exp x -> expression env x
-    | `Choice_array x -> collection_type env x
+    | `Choice_array x -> todo env x (* collection_type env x*)
   in
   let v2 =
     match v2 with Some x -> type_arguments env x | None -> todo env ()
@@ -839,11 +838,12 @@ and class_const_declarator (env : env) ((v1, v2) : CST.class_const_declarator) =
   in
   todo env (v1, v2)
 
-and compound_statement (env : env) ((v1, v2, v3) : CST.compound_statement) =
-  let v1 = token env v1 (* "{" *) in
-  let v2 = List.map (statement env) v2 in
-  let v3 = token env v3 (* "}" *) in
-  todo env (v1, v2, v3)
+and compound_statement (env : env) ((v1, v2, v3) : CST.compound_statement) : AST.stmt =
+  let curly_left = token env v1 (* "{" *) in
+  let statements = List.map (statement env) v2 in
+  let curly_right = token env v3 (* "}" *) in
+  AST.Block (curly_left, statements, curly_right) |> AST.s
+  (* (curly_left, statements, curly_right) *)
 
 and const_declarator (env : env) ((v1, v2, v3) : CST.const_declarator) =
   let v1 = anon_choice_id_0c70504 env v1 in
@@ -858,8 +858,10 @@ and declaration (env : env) (x : CST.declaration) =
         match v1 with Some x -> attribute_modifier env x | None -> todo env ()
       in
       let v2 = function_declaration_header env v2 in
-      let v3 = anon_choice_comp_stmt_c6c6bb4 env v3 in
+      let v3 = inline_compound_statement env v3 in
+      (* { f_name; f_kind = AST_generic.Function; } *)
       todo env (v1, v2, v3)
+
   | `Class_decl (v1, v2, v3, v4, v5, v6, v7, v8, v9, v10) ->
       let v1 =
         match v1 with Some x -> attribute_modifier env x | None -> todo env ()
@@ -1059,7 +1061,7 @@ and enumerator (env : env) ((v1, v2, v3, v4) : CST.enumerator) =
   let v4 = token env v4 (* ";" *) in
   todo env (v1, v2, v3, v4)
 
-and expression (env : env) (x : CST.expression) =
+and expression (env : env) (x : CST.expression) : AST.expr =
   match x with
   | `Here (v1, v2, v3, v4) ->
       let v1 = token env v1 (* "<<<" *) in
@@ -1240,8 +1242,8 @@ and expression (env : env) (x : CST.expression) =
       let v4 = token env v4 (* "==>" *) in
       let v5 =
         match v5 with
-        | `Exp x -> expression env x
-        | `Comp_stmt x -> compound_statement env x
+        | `Comp_stmt x -> compound_statement env x 
+        | `Exp x -> AST.ExprStmt ((expression env x), fk) |> AST.s (* this match has a type mismatch *)
       in
       todo env (v1, v2, v3, v4, v5)
   | `Call_exp x -> call_expression env x
@@ -1402,7 +1404,7 @@ and method_declaration (env : env) ((v1, v2, v3, v4) : CST.method_declaration) =
   in
   let v2 = List.map (member_modifier env) v2 in
   let v3 = function_declaration_header env v3 in
-  let v4 = anon_choice_comp_stmt_c6c6bb4 env v4 in
+  let v4 = inline_compound_statement env v4 in
   todo env (v1, v2, v3, v4)
 
 and parameter (env : env) ((v1, v2, v3, v4, v5, v6, v7) : CST.parameter) =
@@ -1579,19 +1581,23 @@ and selection_expression (env : env) ((v1, v2, v3) : CST.selection_expression) =
   let v3 = variablish env v3 in
   todo env (v1, v2, v3)
 
-and statement (env : env) (x : CST.statement) : stmt =
+and statement (env : env) (x : CST.statement) : AST.stmt =
   match x with
   | `Choice_func_decl x -> declaration env x
   | `Comp_stmt x -> compound_statement env x
-  | `Empty_stmt tok -> token env tok (* ";" *)
+  | `Empty_stmt tok -> empty_stmt env tok (* ";" *)
   | `Exp_stmt x -> expression_statement env x
-  | `Ret_stmt (v1, v2, v3) ->
-      let v1 = token env v1 (* "return" *) in
+  | `Ret_stmt (return, v2, v3) ->
+      let return = token env return (* "return" *) in
       let v2 =
-        match v2 with Some x -> expression env x | None -> todo env ()
+        match v2 with
+          | Some x -> 
+              let v1 = expression env x in
+              Some v1
+          | None -> None
       in
       let v3 = token env v3 (* ";" *) in
-      todo env (v1, v2, v3)
+      AST.Return (return, v2, v3) |> AST.s
   | `Brk_stmt (v1, v2, v3) ->
       let v1 = token env v1 (* "break" *) in
       let v2 =
@@ -1829,7 +1835,7 @@ and statement (env : env) (x : CST.statement) : stmt =
                 v3
             in
             let v4 = token env v4 (* ")" *) in
-            let v5 = anon_choice_comp_stmt_c6c6bb4 env v5 in
+            let v5 = inline_compound_statement env v5 in
             todo env (v1, v2, v3, v4, v5)
       in
       todo env (v1, v2, v3)
@@ -2321,5 +2327,5 @@ let any_of_string input_kind s =
                parsed with tree-sitter. *)
       (* TODO: parse partial programs like expressions and such. *)
       match (parse input_kind file).program with
-      | Some ast -> Program ast
+      | Some ast -> AST.Pr ast
       | None -> failwith "not a valid semgrep pattern for Hack")
