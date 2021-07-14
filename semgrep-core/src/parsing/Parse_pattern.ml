@@ -103,8 +103,8 @@ let parse_pattern lang ?(print_errors = false) str =
         in
         Php_to_generic.any any
     | Lang.Hack ->
-        let any = Parse_hack_tree_sitter.any_of_string `Pattern str in
-        Php_to_generic.any any
+        let res = Parse_hack_tree_sitter.parse_pattern str in
+        extract_pattern_from_tree_sitter_result res print_errors
     | Lang.Cplusplus -> failwith "No C++ generic parser yet"
     | Lang.R -> failwith "No R generic parser yet"
     | Lang.Yaml -> Yaml_to_generic.any str

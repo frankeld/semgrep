@@ -8,6 +8,7 @@
 
 open Common
 module AST = AST_generic
+module G = AST_generic
 module CST = Tree_sitter_hack.CST
 module H = Parse_tree_sitter_helpers
 module PI = Parse_info
@@ -32,15 +33,10 @@ module PI = Parse_info
    programs, this allows us to choose how to convert ambiguous constructs
    such as $FOO.
 *)
-type input_kind = [ `Pattern | `Target ]
+type env = unit H.env
 
-type env = input_kind H.env
+let token = H.token
 
-(* TODO: use this:
-let token = H.token
-*)
-(* let token (env : env) _ = failwith "not implemented: token" *)
-let token = H.token
 let str = H.str
 
 let fk = Parse_info.fake_info ""
@@ -234,14 +230,18 @@ let class_modifier (env : env) (x : CST.class_modifier) =
 
 (* "final" *)
 
-let literal (env : env) (x : CST.literal) =
+let literal (env : env) (x : CST.literal) : G.literal =
   match x with
-  | `Str tok -> token env tok (* string *)
-  | `Int tok -> token env tok (* integer *)
-  | `Float tok -> token env tok (* float *)
-  | `True x -> true_ env x
-  | `False x -> false_ env x
-  | `Null x -> null env x
+  | `Str tok -> G.String (todo env tok) (* string *)
+  | `Int tok ->
+      let s, tok = str env tok in
+      G.Int (int_of_string_opt s, tok) (* integer *)
+  | `Float tok -> 
+      let s, tok = str env tok in
+      G.Float (float_of_string_opt s, tok) (* float *)
+  | `True x ->  G.Bool (true, true_ env x)
+  | `False x -> G.Bool (false, false_ env x)
+  | `Null x -> G.Null (null env x)
 
 let qualified_identifier (env : env) (x : CST.qualified_identifier) =
   match x with
@@ -538,7 +538,7 @@ and argument (env : env) ((v1, v2) : CST.argument) =
   let v2 = expression env v2 in
   todo env (v1, v2)
 
-and arguments (env : env) ((v1, v2, v3) : CST.arguments) : AST.arguments =
+and arguments (env : env) ((v1, v2, v3) : CST.arguments) : AST.arguments AST.bracket =
   let v1 = token env v1 (* "(" *) in
   let v2 =
     match v2 with
@@ -547,21 +547,22 @@ and arguments (env : env) ((v1, v2, v3) : CST.arguments) : AST.arguments =
         let v2 =
           List.map
             (fun (v1, v2) ->
-              let v1 = token env v1 (* "," *) in
+              let _v1 = token env v1 (* "," *) in
               let v2 = argument env v2 in
-              todo env (v1, v2))
+              (* todo env (v1, v2)) *) v2)
             v2
+        (* Is it safe to just comment out? *)
         in
-        let v3 =
+        let _v3 =
           match v3 with
           | Some tok -> token env tok (* "," *)
-          | None -> None
+          | None -> fk
         in
-        todo env (v1, v2, v3)
-    | None -> todo env ()
+        v1 :: v2
+    | None -> []
   in
   let v3 = token env v3 (* ")" *) in
-  todo env (v1, v2, v3)
+  (v1, v2, v3)
 
 and attribute_modifier (env : env)
     ((v1, v2, v3, v4, v5, v6) : CST.attribute_modifier) =
@@ -1150,7 +1151,7 @@ and expression (env : env) (x : CST.expression) : AST.expr =
       in
       let v4 = token env v4 (* "}" *) in
       todo env (v1, v2, v3, v4)
-  | `Choice_str x -> literal env x
+  | `Choice_str x -> G.L (literal env x)
   | `Choice_var x -> variablish env x
   | `Pref_str (v1, v2) ->
       let v1 =
@@ -2113,8 +2114,8 @@ and type_parameters (env : env) ((v1, v2, v3, v4, v5) : CST.type_parameters) =
 
 and variablish (env : env) (x : CST.variablish) =
   match x with
-  | `Var tok -> token env tok (* variable *)
-  | `Pipe_var tok -> token env tok (* "$$" *)
+  | `Var tok -> todo env tok (* variable *)
+  | `Pipe_var tok -> todo env tok (* "$$" *)
   | `List_exp (v1, v2, v3, v4, v5, v6) ->
       let v1 = token env v1 (* "list" *) in
       let v2 = token env v2 (* "(" *) in
@@ -2146,13 +2147,13 @@ and variablish (env : env) (x : CST.variablish) =
       in
       let v4 = token env v4 (* "]" *) in
       todo env (v1, v2, v3, v4)
-  | `Qual_id x -> qualified_identifier env x
+  | `Qual_id x -> todo env x
   | `Paren_exp x -> parenthesized_expression env x
   | `Call_exp x -> call_expression env x
   | `Scoped_id x -> scoped_identifier env x
-  | `Scope_id x -> scope_identifier env x
+  | `Scope_id x -> todo env x
   | `Sele_exp x -> selection_expression env x
-  | `Xhp_class_id tok -> token env tok
+  | `Xhp_class_id tok -> todo env tok
 
 (* pattern :[a-zA-Z_][a-zA-Z0-9_]*([-:][a-zA-Z0-9_]+)* *)
 and where_clause (env : env) ((v1, v2) : CST.where_clause) =
@@ -2275,7 +2276,7 @@ and xhp_expression (env : env) (x : CST.xhp_expression) =
             | `Xhp_str tok -> token env tok (* pattern [^<]+ *)
             | `Xhp_comm tok -> token env tok (* pattern <!--(.|[\n\r])*--> *)
             | `Xhp_braced_exp x -> xhp_braced_expression env x
-            | `Xhp_exp x -> xhp_expression env x)
+            | `Xhp_exp x -> todo env x)
           v2
       in
       let v3 = xhp_close env v3 in
@@ -2299,7 +2300,7 @@ and xhp_spread_expression (env : env)
   let v4 = token env v4 (* "}" *) in
   todo env (v1, v2, v3, v4)
 
-let script (env : env) ((v1, v2) : CST.script) : program =
+let script (env : env) ((v1, v2) : CST.script) : AST.program =
   let _v1 =
     match v1 with
     | Some tok -> token env tok (* pattern <\?[hH][hH] *) |> ignore
@@ -2307,25 +2308,37 @@ let script (env : env) ((v1, v2) : CST.script) : program =
   in
   List.map (statement env) v2
 
-(*
-   Entry point
-*)
-let parse input_kind file =
+(*****************************************************************************)
+(* Entry point *)
+(*****************************************************************************)
+let parse file =
   H.wrap_parser
     (fun () ->
       Parallel.backtrace_when_exn := false;
       Parallel.invoke Tree_sitter_hack.Parse.file file ())
     (fun cst ->
-      let env = { H.file; conv = H.line_col_to_pos file; extra = input_kind } in
-      let x = script env cst in
-      x)
+      let env = { H.file; conv = H.line_col_to_pos file; extra = () } in
 
-let any_of_string input_kind s =
-  Common2.with_tmp_file ~str:s ~ext:"hack" (fun file ->
-      (* TODO: raise an exception with a useful error message when
-               parsing fails. Should be done generically for any pattern
-               parsed with tree-sitter. *)
-      (* TODO: parse partial programs like expressions and such. *)
-      match (parse input_kind file).program with
-      | Some ast -> AST.Pr ast
-      | None -> failwith "not a valid semgrep pattern for Hack")
+      try script env cst
+      with Failure "not implemented" as exn ->
+        let s = Printexc.get_backtrace () in
+        pr2 "Some constructs are not handled yet";
+        pr2 "CST was:";
+        CST.dump_tree cst;
+        pr2 "Original backtrace:";
+        pr2 s;
+        raise exn)
+
+(* todo: special mode to convert Ellipsis in the right construct! *)
+let parse_pattern str =
+  H.wrap_parser
+    (fun () ->
+      Parallel.backtrace_when_exn := false;
+      Parallel.invoke Tree_sitter_hack.Parse.string str ())
+    (fun cst ->
+      let file = "<pattern>" in
+      let env = { H.file; conv = Hashtbl.create 0; extra = () } in
+      match script env cst with
+      | [ { s = G.ExprStmt (e, _); _ } ] -> G.E e
+      | [ x ] -> G.S x
+      | xs -> G.Ss xs)

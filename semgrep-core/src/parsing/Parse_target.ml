@@ -239,6 +239,8 @@ let just_parse_with_lang lang file =
       run file [ TreeSitter Parse_csharp_tree_sitter.parse ] (fun x -> x)
   | Lang.Kotlin ->
       run file [ TreeSitter Parse_kotlin_tree_sitter.parse ] (fun x -> x)
+  | Lang.Hack ->
+      run file [ TreeSitter Parse_hack_tree_sitter.parse ] (fun x -> x)
   | Lang.Lua -> run file [ TreeSitter Parse_lua_tree_sitter.parse ] (fun x -> x)
   | Lang.Rust ->
       run file [ TreeSitter Parse_rust_tree_sitter.parse ] (fun x -> x)
@@ -285,10 +287,6 @@ let just_parse_with_lang lang file =
         (fun cst ->
           let ast = Ast_php_build.program cst in
           Php_to_generic.program ast)
-  | Lang.Hack ->
-      run file
-        [ TreeSitter (Parse_hack_tree_sitter.parse `Target) ]
-        Php_to_generic.program
   | Lang.R -> failwith "No R parser yet; improve the one in tree-sitter"
   | Lang.Yaml ->
       {
