@@ -24,13 +24,13 @@ module PI = Parse_info
    programs, this allows us to choose how to convert ambiguous constructs
    such as $FOO.
 *)
+
 type env = unit H.env
 
 let token = H.token
-
 let str = H.str
-
-
+let sc = PI.fake_info ";"
+let _fake = AST_generic.fake
 
 (*
    Temporarily avoid warnings about these things being unused.
@@ -46,10 +46,6 @@ let todo (env : env) _ = failwith "not implemented"
 (*
    Boilerplate converters
 *)
-
-
-
-
 
 let use_type (env : env) (x : CST.use_type) =
   (match x with
@@ -2359,14 +2355,14 @@ and xhp_spread_expression (env : env) ((v1, v2, v3, v4) : CST.xhp_spread_express
   let v4 = (* "}" *) token env v4 in
   todo env (v1, v2, v3, v4)
 
-let script (env : env) ((v1, v2) : CST.script) : AST.stmt =
-  let v1 =
-    (match v1 with
+let script (env : env) ((v1, v2) : CST.script) : AST.any =
+  let hh_line =
+    match v1 with
      | Some tok -> (* pattern <\?[hH][hH] *) token env tok |> ignore
-     | None -> ())
+     | None -> ()
   in
-  let v2 = List.map (statement env) v2 in
-  AST.Pr (v1 @ v2) |> AST.Ss (v1,v2)
+  let stmts = List.map (statement env) v2 in
+  AST.Ss stmts
 
 (* let script (env : env) ((v1, v2) : CST.script) : AST.program =
    let _v1 =
@@ -2379,6 +2375,7 @@ let script (env : env) ((v1, v2) : CST.script) : AST.stmt =
 (*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
+
 let parse file =
   H.wrap_parser
     (fun () ->
@@ -2386,8 +2383,10 @@ let parse file =
        Parallel.invoke Tree_sitter_hack.Parse.file file ())
     (fun cst ->
        let env = { H.file; conv = H.line_col_to_pos file; extra = () } in
-
-       try script env cst
+       try
+          match script env cst with
+          | AST.Pr xs -> xs
+          | _ -> failwith "not a program"
        with Failure "not implemented" as exn ->
          let s = Printexc.get_backtrace () in
          pr2 "Some constructs are not handled yet";
@@ -2407,6 +2406,6 @@ let parse_pattern str =
        let file = "<pattern>" in
        let env = { H.file; conv = Hashtbl.create 0; extra = () } in
        match script env cst with
-       | [ { s = AST.ExprStmt (e, _); _ } ] -> AST.E e
-       | [ x ] -> AST.S x
-       | xs -> AST.Ss xs)
+       | AST.Pr [ x ] -> AST.S x
+       | AST.Pr xs -> AST.Ss xs
+       | x -> x)
